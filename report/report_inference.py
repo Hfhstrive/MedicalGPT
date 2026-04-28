@@ -528,7 +528,7 @@ def merge_det_vlm(img_path, imgs, det_data, vlm_data):
         case_info[case_no].append(entry)
 
     save_path = os.path.join(args.save_dir, 'merge_describe.jsonl')
-    with open(save_path, 'w', encoding='utf-8') as f:
+    with open(save_path, 'a+', encoding='utf-8') as f:
         f.write(json.dumps(case_info, ensure_ascii=False, indent=4))
     return case_info
 
