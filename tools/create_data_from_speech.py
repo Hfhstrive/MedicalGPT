@@ -63,6 +63,12 @@ def find_standard_file(standard_path: str) -> dict:
         'g_ulcer': '胃溃疡',
         'atrophy': '萎缩性胃炎',
         'im': '肠化',
+        'eso_speckle': '斑驳食管',
+        'hiatal_hernia': '食管裂孔疝',
+    }
+    loc_map = {
+        'eso_speckle': '食管',
+        'hiatal_hernia': '贲门',
     }
 
     if os.path.isdir(standard_path):
@@ -79,10 +85,12 @@ def find_standard_file(standard_path: str) -> dict:
             mode = 'train' if idx <= 0.8 * len(lines) else 'test'
             name = file_name + f'_line{idx}'
             loc = next((word for word in gi_loc if word in line), None)
+            if loc is None:
+                loc = loc_map[file_name]
             if len(line.split(' ')) == 1:
                 norm_text, lesion = line.strip('\n'), lesion_map[file_name]
-            elif len(line.split(' ')) == 3:
-                norm_text, lesion = line.split(' ')[2].strip('\n'), line.split(' ')[0]
+            elif len(line.split(' ')) == 2:
+                norm_text, lesion = line.split(' ')[1].strip('\n'), line.split(' ')[0]
             standard_js.update({
                 name: {
                     'norm_text': norm_text,
@@ -96,16 +104,17 @@ def find_standard_file(standard_path: str) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Batch ASR -> LLM data ")
-    parser.add_argument("--wav_dir", default='/media/inno/ASR/audio/train/real/', help="音频文件路径")
+    parser.add_argument("--wav_dir", default='/media/inno/ASR/audio/train/real/single-multi_lesion_hfh/', help="音频文件路径")
     parser.add_argument("--asr_checkpoint", default="/home/inno/code/ASR/FunASR/examples/industrial_data_pretraining/fun_asr_nano/outputs/fun_asr_nano_2512_gi_v2/", help="ASR模型热词路径")
     parser.add_argument("--hotwords", default="", help="ASR模型热词路径，可为空")
-    parser.add_argument("--standard_path", default="/media/inno/ASR/base_data/standard/multi_lesion.txt", help="规范表达的文件/文件夹路径")
-    parser.add_argument("--asr_result", default="/media/inno/ASR/base_data/ASR_oral/", help="ASR识别结果保存路径")
-    parser.add_argument("--save_dir", default="/media/inno/LLM/retrieval/V2/", help="训练数据集保存路径")
+    parser.add_argument("--standard_path", default="/media/inno/ASR/base_data/standard/v3/", help="规范表达的文件/文件夹路径")
+    parser.add_argument("--asr_result", default="/media/inno/ASR/base_data/ASR_oral/single-multi_lesion/", help="ASR识别结果保存路径")
+    parser.add_argument("--save_dir", default="/media/inno/LLM/retrieval/V3/", help="训练数据集保存路径")
     args = parser.parse_args()
 
     # wav_dir = args.wav_dir
     os.makedirs(args.save_dir, exist_ok=True)
+    os.makedirs(args.asr_result, exist_ok=True)
     if not os.path.isdir(args.wav_dir):
         raise SystemExit(f"wav_dir not found: {args.wav_dir}")
 
@@ -121,11 +130,12 @@ def main():
 
     for p in audio_files:
         name = p.split('/')[-1].split('.')[0]
+        standard_name = name.replace('_oral', '')
         oral_text = asr_transcribe(asr_model, p)
         asr_result_path = os.path.join(args.asr_result, name + '.txt')
         with open(asr_result_path, 'w') as f:
             f.writelines(oral_text + '\n')
-        mode = standard_js[name]['mode']
+        mode = standard_js[standard_name]['mode']
         message = {
             "messages": [
                 {
@@ -134,7 +144,7 @@ def main():
                 },
                 {
                     "role": "assistant",
-                    "content": f"{standard_js[name]['norm_text']}"
+                    "content": f"{standard_js[standard_name]['norm_text']}"
                 },
                 {
                     "role": "user",
@@ -142,7 +152,7 @@ def main():
                 },
                 {
                     "role": "assistant",
-                    "content": f"{standard_js[name]['loc']}"
+                    "content": f"{standard_js[standard_name]['loc']}"
                 },
                 {
                     "role": "user",
@@ -150,7 +160,7 @@ def main():
                 },
                 {
                     "role": "assistant",
-                    "content": f"{standard_js[name]['lesion']}"
+                    "content": f"{standard_js[standard_name]['lesion']}"
                 }
             ]
         }
