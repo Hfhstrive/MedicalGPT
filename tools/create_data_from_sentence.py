@@ -119,7 +119,7 @@ def main():
     parser = argparse.ArgumentParser(description="Batch ASR -> LLM data ")
     # wav_dir、standard_path、asr_result下子文件夹名称一一对应
     parser.add_argument("--wav_dir", default='/media/inno/ASR/audio/train/real/sentence/', help="音频文件路径")
-    parser.add_argument("--asr_checkpoint", default="/home/inno/code/ASR/FunASR/examples/industrial_data_pretraining/fun_asr_nano/outputs/fun_asr_nano_2512_gi_v2/", help="ASR模型热词路径")
+    parser.add_argument("--asr_checkpoint", default="/home/inno/code/ASR/FunASR/examples/industrial_data_pretraining/fun_asr_nano/outputs/fun_asr_nano_2512_gi_v2/", help="ASR模型路径")
     parser.add_argument("--hotwords", default="", help="ASR模型热词路径，可为空")
     parser.add_argument("--standard_path", default="/media/inno/ASR/base_data/standard/sentence/", help="规范表达的文件/文件夹路径")
     parser.add_argument("--asr_result", default="/media/inno/ASR/base_data/ASR_oral/sentence/", help="ASR识别结果保存路径")
