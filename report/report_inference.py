@@ -133,7 +133,7 @@ def vlm_inference_for_case(model, processor, img_paths, case_name, args):
     tmp_crop_dir = None
     
     if args.crop_ai:
-        tmp_crop_dir = os.path.join(args.save_dir, f'{case_name}_crops')
+        tmp_crop_dir = os.path.join(args.ori_path, case_name, f'images_crops')
         os.makedirs(tmp_crop_dir, exist_ok=True)
 
     for image_path in tqdm(img_paths, desc=f'VLM inference for {case_name}'):
@@ -447,7 +447,7 @@ def generate_det_description(det):
     return descriptions
 
 
-def merge_det_vlm(img_path, imgs, det_data, vlm_data):
+def merge_det_vlm(img_path, imgs, case, det_data, vlm_data):
     """合并 det_data 与 vlm_data，返回以病例号/图像名为 key 的字典。
 
     每个 entry 包含：
@@ -527,7 +527,8 @@ def merge_det_vlm(img_path, imgs, det_data, vlm_data):
         }
         case_info[case_no].append(entry)
 
-    save_path = os.path.join(args.save_dir, 'merge_describe.jsonl')
+    os.makedirs(os.path.join(args.save_dir, case), exist_ok=True)
+    save_path = os.path.join(args.save_dir, case, 'merge_describe.jsonl')
     with open(save_path, 'a+', encoding='utf-8') as f:
         f.write(json.dumps(case_info, ensure_ascii=False, indent=4))
     return case_info
@@ -667,7 +668,7 @@ def main(args):
         
         # Step 2: Merge detection and VLM data
         print(f'  Step 2: Merging VLM and detection data...')
-        merge_info = merge_det_vlm(img_path, imgs, det_data, vlm_data)
+        merge_info = merge_det_vlm(img_path, imgs, case, det_data, vlm_data)
         
         # Step 3: Select representative images
         print(f'  Step 3: Selecting representative images...')
@@ -706,6 +707,10 @@ def main(args):
 
         case_info = '\n'.join(grouped_parts)
         user_info = f'该上消化道内镜下的病例套图中, 其模型识别的特征及病变如下所示，请帮我生成内镜报告。其模型详细结果如下: {case_info}'
+        os.makedirs(os.path.join(args.save_dir, case), exist_ok=True)
+        prompt_path = os.path.join(args.save_dir, case, 'prompt.txt')
+        with open(prompt_path, 'w', encoding='utf-8') as f:
+            f.write(user_info)
 
         # Step 5: Generate diagnostic report using LLM
         print(f'  Step 5: Generating LLM report...')
@@ -714,7 +719,7 @@ def main(args):
         # Step 6: Save results
         if responses:
             report = responses[0]
-            report_path = os.path.join(args.save_dir, f'{case}_report.txt')
+            report_path = os.path.join(args.save_dir, case, 'report.txt')
             with open(report_path, 'w', encoding='utf-8') as f:
                 f.write(report)
             print(f'  ✓ Report saved to {report_path}')
@@ -728,7 +733,7 @@ if __name__ == '__main__':
     DEFAULT_VLM = 'Qwen/Qwen3-VL-2B-Instruct'
     DEFAULT_LORA_VLM = '/home/inno/code/VLM/Qwen3-VL/qwen-vl-finetune/output/V2/lora_qwen3_2b_r64_alpha128_dropout0.05_zero2_448_768_freeze_vision-mlp_lr1e-4/checkpoint-320/'
     DEFAULT_LLM = 'Qwen/Qwen3-4B-Instruct-2507'
-    DEFAULT_LORA_LLM = "/home/inno/code/LLM/MedicalGPT/outputs-sft-qwen3-4b-v2"
+    DEFAULT_LORA_LLM = "/home/inno/code/LLM/MedicalGPT/outputs-sft-qwen3-4b-v3"
 
     parser = argparse.ArgumentParser(description='Medical endoscopy report generation pipeline')
     
@@ -746,13 +751,13 @@ if __name__ == '__main__':
     
     # Data parameters
     parser.add_argument('--ori_path', type=str,
-                        default='/media/inno/VLM/D1_images_and_reports_which_have_video_20250316/胃镜/',
+                        default='/media/inno/VLM/D1_images_and_reports_which_have_video_20250316/胃镜_test/',
                         help='Root path of original data')
     parser.add_argument('--det_path', type=str,
-                        default='/media/inno/VLM/D1_images_and_reports_which_have_video_20250316/base/det/胃镜_V3.json',
+                        default='/media/inno/VLM/D1_images_and_reports_which_have_video_20250316/base/det/test.json',
                         help='Detection results JSON file')
     parser.add_argument('--save_dir', type=str,
-                        default='/media/inno/VLM/D1_images_and_reports_which_have_video_20250316/MedicalGPT/V3/',
+                        default='/media/inno/VLM/D1_images_and_reports_which_have_video_20250316/MedicalGPT/test/v3',
                         help='Output directory for results')
     
     # Processing parameters
