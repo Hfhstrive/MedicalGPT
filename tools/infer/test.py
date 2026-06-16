@@ -3,7 +3,7 @@ from peft import PeftModel
 from ipdb import set_trace
 
 # 1. 指定模型名称
-base_model_name = "/root/.cache/huggingface/hub/models--Qwen--Qwen3-4B-Instruct-2507/snapshots/cdbee75f17c01a7cc42f958dc650907174af0554/"
+base_model_name = "/home/inno/.cache/huggingface/hub/models--Qwen--Qwen3-4B-Instruct-2507/snapshots/cdbee75f17c01a7cc42f958dc650907174af0554/"
 # lora_adapter_path = "/media/inno/work_dirs/LLM/MedicalGPT/outputs-sft-qwen3-4b-report-v3/"  # 多语句特征描述
 # lora_adapter_path = "/media/inno/work_dirs/LLM/MedicalGPT/outputs-sft-qwen3-4b-report-v4-rank16/checkpoint-195/" # 单病例特征描述
 lora_adapter_path = "/media/inno/work_dirs/LLM/MedicalGPT/outputs-sft-qwen3-4b-report-v5-rank16/"
