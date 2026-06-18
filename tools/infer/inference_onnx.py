@@ -140,8 +140,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--onnx_model_dir', default='/media/inno/work_dirs/LLM/MedicalGPT/outputs-sft-qwen3-4b-report-v5-rank16/onnx/', type=str, 
                         help="导出的 ONNX 模型所在的目录")
-    parser.add_argument('--file_name', default="model_int4.onnx", type=str,
+    parser.add_argument('--file_name', default="model.onnx", type=str,
                         help="导出的 ONNX 模型主文件名（如 model.onnx 或 decoder_model.onnx）")
+    parser.add_argument('--gpu_mem_limit', type=float, default=0.0,
+                        help="限制 ONNX Runtime 内存池在 GPU 上的最大显存（单位：GB），例如 7.8。默认 0.0 不限制")
     parser.add_argument('--device', default="cuda", type=str, choices=["cuda", "cpu"],
                         help="运行推理的设备，支持 cuda 或 cpu")
     parser.add_argument('--system_prompt', default="", type=str, help="系统 Prompt")
@@ -153,7 +155,7 @@ def main():
     parser.add_argument('--interactive', action='store_true', help="是否开启命令行交互模式（默认多轮对话）")
     parser.add_argument('--temperature', type=float, default=0.0)
     parser.add_argument('--output_file', default='./predictions_onnx_result.jsonl', type=str)
-    parser.add_argument('--use_cache', action='store_true', help="是否启用 KV Cache。对于单文件（如 model.onnx）建议保持默认不启用（False）")
+    parser.add_argument('--no_cache', action='store_true', help="是否禁用 KV Cache。默认启用（True），用于多文件模式")
     args = parser.parse_args()
     print("解析后的参数：", args)
 
@@ -174,16 +176,29 @@ def main():
     provider = "CUDAExecutionProvider" if args.device == "cuda" else "CPUExecutionProvider"
     print(f"正在载入 ONNX 模型，推理设备: {args.device}，执行器: {provider} ...")
     
+    import onnxruntime as ort
+    session_options = ort.SessionOptions()
+    # 【极致显存优化点】：强制 Initializers (权重) 直接使用 GPU 设备分配器，消除重复拷贝与 VRAM 碎片
+    session_options.add_session_config_entry("session.use_device_allocator_for_initializers", "1")
+    
     # 针对 CUDAExecutionProvider 的显存分配优化，避免 ONNX Runtime 抢占所有显存导致 PyTorch 报错
+    provider_options = {}
     if args.device == "cuda":
         os.environ["ORT_CUDA_PROVIDER_OPTIONS"] = "arena_extend_strategy=kSameAsRequested"
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:256"
+        
+        provider_options["arena_extend_strategy"] = "kSameAsRequested"
+        provider_options["do_copy_in_default_stream"] = "True"
+        if args.gpu_mem_limit > 0.0:
+            provider_options["gpu_mem_limit"] = str(int(args.gpu_mem_limit * 1024 * 1024 * 1024))
 
     model = ORTModelForCausalLM.from_pretrained(
         args.onnx_model_dir,
         file_name=args.file_name,
         provider=provider,
-        use_cache=args.use_cache
+        use_cache=not args.no_cache,
+        provider_options=provider_options if args.device == "cuda" else None,
+        session_options=session_options
     )
     
     # 记录并输出加载后的资源状态
@@ -207,10 +222,23 @@ def main():
         print(f"初始化前后 GPU 显存变化: +{gpu_delta:.2f} MB (当前总显存: {gpu_end_used:.2f} MB / {gpu_total:.2f} MB, 占比 {gpu_ratio:.2f}%)")
     print("===========================================================\n")
     
+    # 强制回收内存和显存碎片，修剪 C 堆内存分配
+    import gc
+    import ctypes
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+        print("【内存修剪】已成功调用 malloc_trim(0) 回收闲置系统内存...")
+    except Exception:
+        pass
+
     # 3. 测试数据
     if args.data_file is None:
         examples = [
-            "食管20cm至贲门口有四条蓝色的曲张静脉蛇形迂曲，红色征阳性。食管30cm处有一片黏膜粗糙，NBI下呈茶褐色，不规则、碘染不上色，警惕高级别上皮内瘤变。胃体还有马赛克样改变，散在红斑和糜烂；胃窦还有红疹样变和散在痘疹。。",
+            "食管20cm至贲门口有四条蓝色的曲张静脉蛇形迂曲，红色征阳性。食管30cm处有一片黏膜粗糙，NBI下呈茶褐色，不规则、碘染不上色，警惕高级别上皮内瘤变。胃体还有马赛克样改变，散在红斑和糜烂；胃窦还有红疹样变和散在痘疹。",
         ]
     else:
         with open(args.data_file, 'r', encoding='utf-8') as f:
@@ -294,6 +322,16 @@ def main():
                 gpu_ratio = (gpu_used / (total_gpu / 1024 / 1024)) * 100
                 print(f"当前进程 GPU 显存占用: {gpu_used:.2f} MB (显卡总占比: {gpu_ratio:.2f}%)")
             print(f"--------------------------------------------------\n")
+            
+            # 推理后显存/内存深度回收
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            try:
+                libc = ctypes.CDLL("libc.so.6")
+                libc.malloc_trim(0)
+            except Exception:
+                pass
             
             # 保存到结果文件
             result = {

@@ -39,16 +39,17 @@ def main():
     parser.add_argument('--type', type=str, default="int4", choices=["int8", "int4"], help="量化类型：int8 或 int4")
     args = parser.parse_args()
 
-    if not os.path.exists(args.input_model):
-        raise FileNotFoundError(f"未找到输入模型：{args.input_model}")
-
-    if args.type == "int8":
-        quantize_int8(args.input_model, args.output_model)
-    elif args.type == "int4":
-        quantize_int4(args.input_model, args.output_model)
-    
-    gc.collect()
-    print("🎉 量化完成！")
+    try:
+        if args.type == "int8":
+            quantize_int8(args.input_model, args.output_model)
+        elif args.type == "int4":
+            quantize_int4(args.input_model, args.output_model)
+        gc.collect()
+        print("🎉 量化完成！", flush=True)
+    except Exception as e:
+        print(f"❌ 量化抛出异常: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
