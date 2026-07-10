@@ -7,30 +7,22 @@ import argparse
 import os
 import gc
 
-def quantize_int8(input_model, output_model):
-    import onnxruntime.quantization as ort_quant
-    print("⚠️ 警告: 动态 INT8 量化要求输入的 ONNX 模型为 FP32 精度。")
-    print("⚠️ 如果输入的 ONNX 是以 FP16 精度导出的，此操作会导致 DequantizeLinear 算子的 scale 生成为 float16 类型，")
-    print("⚠️ 进而在 ONNX Runtime 加载时触发 InvalidGraph (DequantizeLinear scale type float16 is invalid) 错误。")
-    print(f"正在尝试将 {input_model} 动态量化为 INT8: {output_model} ...")
-    ort_quant.quantize_dynamic(
-        model_input=input_model,
-        model_output=output_model,
-        weight_type=ort_quant.QuantType.QInt8,
-        use_external_data_format=True
-    )
-
-def quantize_int4(input_model, output_model):
-    from onnxruntime.quantization.matmul_4bits_quantizer import MatMul4BitsQuantizer
-    print(f"正在将 {input_model} 仅权重块量化为 INT4: {output_model} ...")
-    quantizer = MatMul4BitsQuantizer(
-        model=input_model,
+def quantize_weight_only(input_model, output_model, bits=8):
+    # int8量化需onnxruntime版本==1.23.2
+    from onnxruntime.quantization.matmul_nbits_quantizer import MatMulNBitsQuantizer, DefaultWeightOnlyQuantConfig
+    print(f"正在将 {input_model} 仅权重块量化为 INT{bits}: {output_model} ...")
+    is_symmetric = True if bits == 4 else False
+    algo_config = DefaultWeightOnlyQuantConfig(
+        bits=bits,
         block_size=128,
-        is_symmetric=True,
-        accuracy_level=1
+        is_symmetric=is_symmetric
+    )
+    quantizer = MatMulNBitsQuantizer(
+        model=input_model,
+        algo_config=algo_config
     )
     quantizer.process()
-    quantizer.model.save_model_to_file(output_model, True)
+    quantizer.model.save_model_to_file(output_model, use_external_data_format=True)
 
 def main():
     parser = argparse.ArgumentParser(description="轻量级 ONNX 模型量化工具")
@@ -41,15 +33,16 @@ def main():
 
     try:
         if args.type == "int8":
-            quantize_int8(args.input_model, args.output_model)
+            quantize_weight_only(args.input_model, args.output_model, bits=8)
         elif args.type == "int4":
-            quantize_int4(args.input_model, args.output_model)
+            quantize_weight_only(args.input_model, args.output_model, bits=4)
         gc.collect()
         print("🎉 量化完成！", flush=True)
     except Exception as e:
         print(f"❌ 量化抛出异常: {e}", flush=True)
         import traceback
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     main()
