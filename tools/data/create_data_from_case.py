@@ -11,6 +11,8 @@ from ipdb import set_trace
 
 
 def load_asr_model(checkpoint: str, device: str = "cuda:0", hotwords_path: str = None):
+    """加载并初始化ASR模型"""
+    print("加载 ASR 模型...")
     from funasr import AutoModel
 
     hotwords = None
@@ -38,9 +40,38 @@ def load_asr_model(checkpoint: str, device: str = "cuda:0", hotwords_path: str =
     return model, hotwords
 
 
-def asr_transcribe(model, wav_path: str) -> str:
+def load_corrector(hotwords_path: str, threshold: float = 0.85):
+    """加载并初始化后处理医学纠错词表"""
+    print("正在加载后处理医学纠错词表...")
+    try:
+        import sys
+        sys.path.append('/home/inno/code/ASR/asr-hotword')
+        from hotword import PhonemeCorrector
+        corrector = PhonemeCorrector(threshold=threshold)
+        if hotwords_path and os.path.exists(hotwords_path):
+            with open(hotwords_path, "r", encoding="utf-8") as f:
+                hotwords_content = f.read()
+            corrector.update_hotwords(hotwords_content)
+            print("纠错词表加载完成。")
+            return corrector
+        else:
+            print(f"警告：未找到热词文件 {hotwords_path}")
+            return None
+    except Exception as e:
+        print(f"初始化 PhonemeCorrector 后处理纠错模块失败: {e}")
+        return None
+
+
+def asr_transcribe(model, wav_path: str, corrector=None) -> str:
     res = model.generate(input=[wav_path], cache={}, batch_size_s=0)
-    return res[0].get("text", "")
+    raw_text = res[0].get("text", "")
+    if corrector is not None:
+        try:
+            corrected_res = corrector.correct(raw_text)
+            return corrected_res.text
+        except Exception as e:
+            print(f"后处理纠错执行失败: {e}")
+    return raw_text
 
 
 def process_gastroscope_text(standard_file: str, oral_info: str) -> dict:
@@ -89,16 +120,33 @@ def process_gastroscope_text(standard_file: str, oral_info: str) -> dict:
 
 
 def process_colonscope_text(standard_file: str, oral_info: str) -> dict:
-    """处理肠镜文本的逻辑接口 (可在下面编写您的肠镜解析与结构转换逻辑)"""
+    """处理肠镜文本，直接生成内镜报告"""
+    with open(standard_file, 'r', encoding='utf-8') as f:
+        standard_content = [line.strip() for line in f.readlines() if line.strip()]
+    assert len(standard_content) == 4, f'肠镜标准文件行数不等于4: {standard_file}'
+
+    colon_report = {
+        '镜检所见': '',
+        '诊断结论': '', 
+    }
+    for i, line in enumerate(standard_content):
+        if i != 3:
+            if colon_report['镜检所见']:
+                colon_report['镜检所见'] += '\n' + line
+            else:
+                colon_report['镜检所见'] = line
+        else:
+            colon_report['诊断结论'] = re.split(f'[；;]', line.strip('\n'))
+    
     message = {
         "messages": [
             {
                 "role": "user",
-                "content": f"肠镜口语输入：{oral_info}"
+                "content": f"提取有效信息,生成标准肠镜报告：{oral_info}"
             },
             {
                 "role": "assistant",
-                "content": "肠镜标准表达占位符"
+                "content": f"{colon_report}"
             }
         ]
     }
@@ -108,21 +156,22 @@ def process_colonscope_text(standard_file: str, oral_info: str) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="LLM data ")
     # -------------------------------- ASR 配置 ----------------------------------------------------
-    parser.add_argument('--asr_checkpoint', default="/media/inno/work_dirs/ASR/FunASR/outputs/fun_asr_nano_2512_gi_v3/", help='ASR模型路径')
-    parser.add_argument("--hotwords", default="/media/inno/ASR/胃镜/gi_hotwords_v3.txt", help="ASR模型热词路径，可为空")
+    parser.add_argument('--asr_checkpoint', default="/media/inno/work_dirs/ASR/FunASR/outputs/fun_asr_nano_2512_v4/", help='ASR模型路径')
+    parser.add_argument("--hotwords", default="", help="ASR模型推理时热词路径，可为空，要求词汇量少且精")
+    parser.add_argument("--corrector_hotwords", default="/media/inno/ASR/gi_hotwords.txt", help="后处理医学纠错词表路径，可为空，词汇量<5000即可")
     # --------------------------------------------------------------------------------------------
-    parser.add_argument("--save_dir", default="/media/inno/LLM/胃镜/report/V5_test/", help="训练数据集保存路径")
-    parser.add_argument("--case_mode", default=None, help="JSON路径，包含train_cases和val_cases，用于指定病例划分集合")
-    parser.add_argument("--gi_type", choices=["gastro", "colon"], default="gastro", help="内镜类型 (gastro: 胃镜, colon: 肠镜)")
+    parser.add_argument("--save_dir", default="/media/inno/LLM/肠镜/report/V1/", help="训练数据集保存路径")
+    parser.add_argument("--case_mode", default="/media/inno/ASR/ChatML/V4/case_mapping.json", help="JSON路径，包含train_cases和val_cases，用于指定病例划分集合")
     args = parser.parse_args()
 
     os.makedirs(args.save_dir, exist_ok=True)
 
     # -------------------------------- 数据源配置区域 ------------------------------------------
-    # ----------------(口语化文本/音频文件夹路径, 标准表达文件夹路径, 是否为口语化音频)----------------
+    # ----------------(口语化文本/音频文件夹路径, 标准表达文件夹路径, 是否为口语化音频, 胃镜/肠镜)----------------
     data_sources = [
-        # ("/media/inno/ASR/胃镜/base_data/oral/case/", "/media/inno/ASR/胃镜/base_data/standard/case/", False),   # 胃镜V4
-        ("/media/inno/ASR/胃镜/audio/train/real/case/", "/media/inno/ASR/胃镜/base_data/standard/case/", True),  # 胃镜V5
+        # ("/media/inno/ASR/胃镜/base_data/oral/case/", "/media/inno/ASR/胃镜/base_data/standard/case/", False, 'gastro'),   # 胃镜V4
+        # ("/media/inno/ASR/胃镜/audio/train/real/case/", "/media/inno/ASR/胃镜/base_data/standard/case/", True, 'gastro'),  # 胃镜V5
+        ("/media/inno/ASR/肠镜/audio/train/real/case/", "/media/inno/ASR/肠镜/base_data/standard_1/case/", True, 'colon'),  # 肠镜V1
     ]
     # ------------------------------------------------------------------------------------------
 
@@ -142,11 +191,13 @@ def main():
             print(f"加载 case_mode 失败: {e}")
 
 
-    # 判断是否需要加载 ASR 模型
+    # 判断是否需要加载 ASR 模型和纠错后处理
     any_asr = any(src[2] for src in data_sources)
+    asr_model = None
+    corrector = None
     if any_asr:
-        print("加载 ASR 模型...")
         asr_model, hotwords = load_asr_model(args.asr_checkpoint, hotwords_path=args.hotwords)
+        corrector = load_corrector(args.hotwords, threshold=0.85)
 
     # 清理已存在的 train.jsonl 和 val.jsonl 以免重复追加
     for mode in ['train', 'val']:
@@ -166,7 +217,7 @@ def main():
     global_train_count = 0
     global_val_count = 0
 
-    for oral_path, standard_path, asr in data_sources:
+    for oral_path, standard_path, asr, gi_type in data_sources:
         print(f"处理数据源: oral_path={oral_path}, standard_path={standard_path}, asr={asr}")
         if not os.path.exists(standard_path):
             print(f"警告: 标准文件夹 {standard_path} 不存在，跳过该数据源")
@@ -215,7 +266,7 @@ def main():
                         assert len(content) == 1
                         oral_info = content[0].strip('\n')
                     else:
-                        oral_info = asr_transcribe(asr_model, wav_file)
+                        oral_info = asr_transcribe(asr_model, wav_file, corrector=corrector)
                         os.makedirs(os.path.dirname(wav_oral_file), exist_ok=True)
                         with open(wav_oral_file, 'w', encoding='utf-8') as f:
                             f.writelines(oral_info + '\n')
@@ -241,12 +292,12 @@ def main():
                     val_case_names.append(case_name)
 
                 # 根据内镜类型解析并生成微调消息结构
-                if args.gi_type == "gastro":
+                if gi_type == "gastro":
                     message = process_gastroscope_text(standard_file, oral_info)
-                elif args.gi_type == "colon":
+                elif gi_type == "colon":
                     message = process_colonscope_text(standard_file, oral_info)
                 else:
-                    raise ValueError(f"不支持的内镜类型: {args.gi_type}")
+                    raise ValueError(f"不支持的内镜类型: {gi_type}")
 
                 mode_path = os.path.join(args.save_dir, mode + '.jsonl')
                 with open(mode_path, 'a+', encoding='utf-8') as f:
