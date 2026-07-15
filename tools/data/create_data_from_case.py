@@ -136,7 +136,7 @@ def process_colonscope_text(standard_file: str, oral_info: str) -> dict:
             else:
                 colon_report['镜检所见'] = line
         else:
-            colon_report['诊断结论'] = re.split(f'[；;]', line.strip('\n'))
+            colon_report['诊断结论'] = re.split(f'[；;.。]', line.strip('\n'))
     
     message = {
         "messages": [
@@ -160,7 +160,7 @@ def main():
     parser.add_argument("--hotwords", default="", help="ASR模型推理时热词路径，可为空，要求词汇量少且精")
     parser.add_argument("--corrector_hotwords", default="/media/inno/ASR/gi_hotwords.txt", help="后处理医学纠错词表路径，可为空，词汇量<5000即可")
     # --------------------------------------------------------------------------------------------
-    parser.add_argument("--save_dir", default="/media/inno/LLM/肠镜/report/V1/", help="训练数据集保存路径")
+    parser.add_argument("--save_dir", default="/media/inno/LLM/肠镜/report/V1_test/", help="训练数据集保存路径")
     parser.add_argument("--case_mode", default="/media/inno/ASR/ChatML/V4/case_mapping.json", help="JSON路径，包含train_cases和val_cases，用于指定病例划分集合")
     args = parser.parse_args()
 
@@ -197,7 +197,7 @@ def main():
     corrector = None
     if any_asr:
         asr_model, hotwords = load_asr_model(args.asr_checkpoint, hotwords_path=args.hotwords)
-        corrector = load_corrector(args.hotwords, threshold=0.85)
+        corrector = load_corrector(args.corrector_hotwords, threshold=0.85)
 
     # 清理已存在的 train.jsonl 和 val.jsonl 以免重复追加
     for mode in ['train', 'val']:
@@ -229,6 +229,7 @@ def main():
                 continue
 
             standard_files = glob.glob(f'{work_lesion_path}/**.txt')
+            standard_files = [f for f in standard_files if not f.endswith('_think.txt')]
             for standard_file in standard_files:
                 case_name = os.path.splitext(os.path.basename(standard_file))[0]
                 # 判断当前病例为哪个集合 (优先用 case_mode 划分，其次采用动态限制保证 val 占比不超过 10%)
