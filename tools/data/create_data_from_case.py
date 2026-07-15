@@ -74,7 +74,7 @@ def asr_transcribe(model, wav_path: str, corrector=None) -> str:
     return raw_text
 
 
-def process_gastroscope_text(standard_file: str, oral_info: str) -> dict:
+def process_gastroscope_text(standard_file: str, oral_info: str, think_content: str = None) -> dict:
     """处理胃镜文本，解析并生成微调所需的规范提示和结论等"""
     with open(standard_file, 'r', encoding='utf-8') as f:
         standard_content = f.readlines()
@@ -88,6 +88,14 @@ def process_gastroscope_text(standard_file: str, oral_info: str) -> dict:
         feature = ' '.join(describe[1:-1])
         feature_infos.append([describe[0], feature, describe[-1]])
     
+    if think_content:
+        # 去除已有的 <think> 和 </think> 标签以防重复，然后统一重新包裹
+        think_content = re.sub(r'</?think>', '', think_content).strip()
+        think_content = f"<think>\n{think_content}\n</think>"
+        assistant_content = f"{think_content}\n{standard_info}"
+    else:
+        assistant_content = f"{standard_info}"
+
     message = {
         "messages": [
             {
@@ -96,7 +104,7 @@ def process_gastroscope_text(standard_file: str, oral_info: str) -> dict:
             },
             {
                 "role": "assistant",
-                "content": f"{standard_info}"
+                "content": assistant_content
             },
             {
                 "role": "user",
@@ -119,7 +127,8 @@ def process_gastroscope_text(standard_file: str, oral_info: str) -> dict:
     return message
 
 
-def process_colonscope_text(standard_file: str, oral_info: str) -> dict:
+
+def process_colonscope_text(standard_file: str, oral_info: str, think_content: str = None) -> dict:
     """处理肠镜文本，直接生成内镜报告"""
     with open(standard_file, 'r', encoding='utf-8') as f:
         standard_content = [line.strip() for line in f.readlines() if line.strip()]
@@ -138,6 +147,14 @@ def process_colonscope_text(standard_file: str, oral_info: str) -> dict:
         else:
             colon_report['诊断结论'] = re.split(f'[；;.。]', line.strip('\n'))
     
+    if think_content:
+        # 去除已有的 <think> 和 </think> 标签以防重复，然后统一重新包裹
+        think_content = re.sub(r'</?think>', '', think_content).strip()
+        think_content = f"<think>\n{think_content}\n</think>"
+        assistant_content = f"{think_content}\n{colon_report}"
+    else:
+        assistant_content = f"{colon_report}"
+
     message = {
         "messages": [
             {
@@ -146,7 +163,7 @@ def process_colonscope_text(standard_file: str, oral_info: str) -> dict:
             },
             {
                 "role": "assistant",
-                "content": f"{colon_report}"
+                "content": assistant_content
             }
         ]
     }
@@ -160,18 +177,19 @@ def main():
     parser.add_argument("--hotwords", default="", help="ASR模型推理时热词路径，可为空，要求词汇量少且精")
     parser.add_argument("--corrector_hotwords", default="/media/inno/ASR/gi_hotwords.txt", help="后处理医学纠错词表路径，可为空，词汇量<5000即可")
     # --------------------------------------------------------------------------------------------
-    parser.add_argument("--save_dir", default="/media/inno/LLM/肠镜/report/V1_test/", help="训练数据集保存路径")
+    parser.add_argument("--save_dir", default="/media/inno/LLM/肠镜/report/V1/", help="训练数据集保存路径")
     parser.add_argument("--case_mode", default="/media/inno/ASR/ChatML/V4/case_mapping.json", help="JSON路径，包含train_cases和val_cases，用于指定病例划分集合")
     args = parser.parse_args()
 
     os.makedirs(args.save_dir, exist_ok=True)
 
     # -------------------------------- 数据源配置区域 ------------------------------------------
-    # ----------------(口语化文本/音频文件夹路径, 标准表达文件夹路径, 是否为口语化音频, 胃镜/肠镜)----------------
+    # ----------------(口语化文本/音频文件夹路径, 标准表达文件夹路径, think的思考链文件夹路径, 是否为口语化音频, 胃镜/肠镜)----------------
     data_sources = [
-        # ("/media/inno/ASR/胃镜/base_data/oral/case/", "/media/inno/ASR/胃镜/base_data/standard/case/", False, 'gastro'),   # 胃镜V4
-        # ("/media/inno/ASR/胃镜/audio/train/real/case/", "/media/inno/ASR/胃镜/base_data/standard/case/", True, 'gastro'),  # 胃镜V5
-        ("/media/inno/ASR/肠镜/audio/train/real/case/", "/media/inno/ASR/肠镜/base_data/standard_1/case/", True, 'colon'),  # 肠镜V1
+        # ("/media/inno/ASR/胃镜/base_data/oral/case/", "/media/inno/ASR/胃镜/base_data/standard/case/", None, False, 'gastro'),   # 胃镜V4
+        # ("/media/inno/ASR/胃镜/audio/train/real/case/", "/media/inno/ASR/胃镜/base_data/standard/case/", None, True, 'gastro'),  # 胃镜V5
+        ("/media/inno/ASR/肠镜/audio/train/real/case/", "/media/inno/ASR/肠镜/base_data/standard_1/case/", None, True, 'colon'),  # 肠镜V1
+        # ("/media/inno/ASR/肠镜/audio/train/real/case/", "/media/inno/ASR/肠镜/base_data/standard_1/case/", "/media/inno/ASR/肠镜/base_data/think/case/", True, 'colon'),  # 肠镜V2
     ]
     # ------------------------------------------------------------------------------------------
 
@@ -192,7 +210,7 @@ def main():
 
 
     # 判断是否需要加载 ASR 模型和纠错后处理
-    any_asr = any(src[2] for src in data_sources)
+    any_asr = any(src[3] for src in data_sources)
     asr_model = None
     corrector = None
     if any_asr:
@@ -217,8 +235,8 @@ def main():
     global_train_count = 0
     global_val_count = 0
 
-    for oral_path, standard_path, asr, gi_type in data_sources:
-        print(f"处理数据源: oral_path={oral_path}, standard_path={standard_path}, asr={asr}")
+    for oral_path, standard_path, think_path, asr, gi_type in data_sources:
+        print(f"处理数据源: oral_path={oral_path}, standard_path={standard_path}, think_path={think_path}, asr={asr}")
         if not os.path.exists(standard_path):
             print(f"警告: 标准文件夹 {standard_path} 不存在，跳过该数据源")
             continue
@@ -229,9 +247,16 @@ def main():
                 continue
 
             standard_files = glob.glob(f'{work_lesion_path}/**.txt')
-            standard_files = [f for f in standard_files if not f.endswith('_think.txt')]
             for standard_file in standard_files:
                 case_name = os.path.splitext(os.path.basename(standard_file))[0]
+
+                # 获取 think 内容
+                think_content = None
+                if think_path and os.path.exists(think_path):
+                    think_file = os.path.join(think_path, lesion, f"{case_name}_think.txt")
+                    if os.path.exists(think_file):
+                        with open(think_file, "r", encoding="utf-8") as f:
+                            think_content = f.read().strip()
                 # 判断当前病例为哪个集合 (优先用 case_mode 划分，其次采用动态限制保证 val 占比不超过 10%)
                 if case_name in train_cases:
                     mode = 'train'
@@ -294,9 +319,9 @@ def main():
 
                 # 根据内镜类型解析并生成微调消息结构
                 if gi_type == "gastro":
-                    message = process_gastroscope_text(standard_file, oral_info)
+                    message = process_gastroscope_text(standard_file, oral_info, think_content)
                 elif gi_type == "colon":
-                    message = process_colonscope_text(standard_file, oral_info)
+                    message = process_colonscope_text(standard_file, oral_info, think_content)
                 else:
                     raise ValueError(f"不支持的内镜类型: {gi_type}")
 
